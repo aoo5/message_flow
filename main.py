@@ -118,7 +118,7 @@ def send_instagram_message(recipient_id: str, text: str):
         return
 
     try:
-        url = "https://graph.facebook.com/v19.0/me/messages"
+        url = "https://graph.facebook.com/v21.0/me/messages"
 
         headers = {
             "Authorization": f"Bearer {INSTAGRAM_ACCESS_TOKEN}",
