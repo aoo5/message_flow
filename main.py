@@ -131,6 +131,8 @@ def send_instagram_message(recipient_id: str, text: str):
         }
 
         response = requests.post(url, headers=headers, json=payload, timeout=20)
+
+        print("INSTAGRAM SEND TO:", recipient_id)
         print("INSTAGRAM SEND STATUS:", response.status_code)
         print("INSTAGRAM SEND RESPONSE:", response.text)
 
@@ -149,13 +151,18 @@ async def receive_webhook(request: Request):
 
             for event in messaging_events:
                 sender_id = event.get("sender", {}).get("id")
+                recipient_id = event.get("recipient", {}).get("id")
                 message = event.get("message", {})
+
                 text = message.get("text", "")
 
-                if not sender_id or not text:
+                # تجاهل read / seen / message_edit / أي event بدون نص
+                if not text:
+                    print("IGNORED EVENT WITHOUT TEXT")
                     continue
 
-                print("MESSAGE FROM:", sender_id)
+                print("SENDER ID:", sender_id)
+                print("RECIPIENT ID:", recipient_id)
                 print("TEXT:", text)
 
                 save_customer(sender_id)
@@ -164,6 +171,7 @@ async def receive_webhook(request: Request):
                 ai_reply = generate_ai_reply(text)
                 save_message(sender_id, "bot", ai_reply)
 
+                # الرد يروح للمرسل الحقيقي فقط
                 send_instagram_message(sender_id, ai_reply)
 
     except Exception as e:
