@@ -19,8 +19,6 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-BOT_ID = "17841455543082799"
-
 app = FastAPI(title="Message Flow Backend")
 
 app.add_middleware(
@@ -73,6 +71,19 @@ def send_instagram_message(recipient_id: str, text: str):
     print("INSTAGRAM SEND RESPONSE:", response.text)
 
 
+def save_customer(instagram_id: str):
+    if not supabase:
+        return
+
+    try:
+        supabase.table("customers").upsert(
+            {"instagram_id": instagram_id},
+            on_conflict="instagram_id",
+        ).execute()
+    except Exception as e:
+        print("SAVE CUSTOMER ERROR:", e)
+
+
 def save_message(instagram_id: str, role: str, text: str):
     if not supabase:
         return
@@ -89,33 +100,24 @@ def save_message(instagram_id: str, role: str, text: str):
         print("SAVE MESSAGE ERROR:", e)
 
 
-def save_customer(instagram_id: str):
-    if not supabase:
-        return
-
-    try:
-        supabase.table("customers").upsert(
-            {"instagram_id": instagram_id},
-            on_conflict="instagram_id",
-        ).execute()
-    except Exception as e:
-        print("SAVE CUSTOMER ERROR:", e)
-
-
 def get_pending_order(instagram_id: str):
     if not supabase:
         return None
 
-    result = (
-        supabase.table("pending_orders")
-        .select("*")
-        .eq("instagram_id", instagram_id)
-        .limit(1)
-        .execute()
-    )
+    try:
+        result = (
+            supabase.table("pending_orders")
+            .select("*")
+            .eq("instagram_id", instagram_id)
+            .limit(1)
+            .execute()
+        )
 
-    if result.data:
-        return result.data[0]
+        if result.data:
+            return result.data[0]
+
+    except Exception as e:
+        print("GET PENDING ORDER ERROR:", e)
 
     return None
 
@@ -134,10 +136,13 @@ def save_pending_order(instagram_id: str, order_data: dict):
         "status": "waiting_confirmation",
     }
 
-    supabase.table("pending_orders").upsert(
-        payload,
-        on_conflict="instagram_id",
-    ).execute()
+    try:
+        supabase.table("pending_orders").upsert(
+            payload,
+            on_conflict="instagram_id",
+        ).execute()
+    except Exception as e:
+        print("SAVE PENDING ORDER ERROR:", e)
 
 
 def confirm_pending_order(instagram_id: str):
@@ -159,34 +164,76 @@ def confirm_pending_order(instagram_id: str):
         "status": "confirmed",
     }
 
-    supabase.table("orders").insert(order_payload).execute()
+    try:
+        supabase.table("orders").insert(order_payload).execute()
 
-    supabase.table("pending_orders").delete().eq(
-        "instagram_id", instagram_id
-    ).execute()
+        supabase.table("pending_orders").delete().eq(
+            "instagram_id", instagram_id
+        ).execute()
 
-    return True
+        return True
+
+    except Exception as e:
+        print("CONFIRM ORDER ERROR:", e)
+        return False
 
 
 def cancel_pending_order(instagram_id: str):
     if not supabase:
         return
 
-    supabase.table("pending_orders").delete().eq(
-        "instagram_id", instagram_id
-    ).execute()
+    try:
+        supabase.table("pending_orders").delete().eq(
+            "instagram_id", instagram_id
+        ).execute()
+    except Exception as e:
+        print("CANCEL PENDING ORDER ERROR:", e)
 
 
 def is_yes(text: str) -> bool:
     text = text.strip().lower()
-    yes_words = ["نعم", "اي", "اي نعم", "صح", "صحيح", "تمام", "اوك", "ok", "yes", "y"]
-    return text in yes_words
+
+    yes_words = [
+        "نعم",
+        "اي",
+        "إي",
+        "اي نعم",
+        "صح",
+        "صحيح",
+        "صحيحه",
+        "تمام",
+        "اوك",
+        "ok",
+        "yes",
+        "y",
+    ]
+
+    for word in yes_words:
+        if word.lower() in text:
+            return True
+
+    return False
 
 
 def is_no(text: str) -> bool:
     text = text.strip().lower()
-    no_words = ["لا", "مو صحيح", "غلط", "كلا", "no", "n"]
-    return text in no_words
+
+    no_words = [
+        "لا",
+        "كلا",
+        "مو",
+        "غلط",
+        "خطأ",
+        "تعديل",
+        "no",
+        "n",
+    ]
+
+    for word in no_words:
+        if word.lower() in text:
+            return True
+
+    return False
 
 
 def extract_order_data(user_message: str) -> dict:
@@ -312,9 +359,11 @@ def handle_message(sender_id: str, text: str) -> str:
     if pending:
         if is_yes(text):
             confirmed = confirm_pending_order(sender_id)
+
             if confirmed:
                 return "تم تأكيد طلبك ✅ راح يتواصل وياك فريقنا قريبًا."
-            return "ما لكيت طلب بانتظار التأكيد. ارسل تفاصيل الطلب مرة ثانية."
+
+            return "صار خطأ أثناء تأكيد الطلب، أرسل التفاصيل مرة ثانية."
 
         if is_no(text):
             cancel_pending_order(sender_id)
