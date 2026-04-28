@@ -51,29 +51,35 @@ def verify_webhook(request: Request):
     return Response(content="Verification failed", status_code=403)
 
 
-def save_message(instagram_id: str, role: str, text: str):
-    if not supabase:
-        print("SUPABASE not configured")
-        return
-
-    supabase.table("messages").insert(
-        {
-            "instagram_id": instagram_id,
-            "role": role,
-            "message_text": text,
-        }
-    ).execute()
-
-
 def save_customer(instagram_id: str):
     if not supabase:
         print("SUPABASE not configured")
         return
 
-    supabase.table("customers").upsert(
-        {"instagram_id": instagram_id},
-        on_conflict="instagram_id",
-    ).execute()
+    try:
+        supabase.table("customers").upsert(
+            {"instagram_id": instagram_id},
+            on_conflict="instagram_id",
+        ).execute()
+    except Exception as e:
+        print("SAVE CUSTOMER ERROR:", e)
+
+
+def save_message(instagram_id: str, role: str, text: str):
+    if not supabase:
+        print("SUPABASE not configured")
+        return
+
+    try:
+        supabase.table("messages").insert(
+            {
+                "instagram_id": instagram_id,
+                "role": role,
+                "message_text": text,
+            }
+        ).execute()
+    except Exception as e:
+        print("SAVE MESSAGE ERROR:", e)
 
 
 def generate_ai_reply(user_message: str) -> str:
@@ -125,7 +131,8 @@ def send_instagram_message(recipient_id: str, text: str):
         }
 
         response = requests.post(url, headers=headers, json=payload, timeout=20)
-        print("INSTAGRAM SEND RESPONSE:", response.status_code, response.text)
+        print("INSTAGRAM SEND STATUS:", response.status_code)
+        print("INSTAGRAM SEND RESPONSE:", response.text)
 
     except Exception as e:
         print("INSTAGRAM SEND ERROR:", e)
@@ -138,27 +145,26 @@ async def receive_webhook(request: Request):
 
     try:
         for entry in data.get("entry", []):
-            for change in entry.get("changes", []):
-                value = change.get("value", {})
-                messages = value.get("messages", [])
+            messaging_events = entry.get("messaging", [])
 
-                for message in messages:
-                    sender_id = message.get("from")
-                    text = message.get("text", {}).get("body", "")
+            for event in messaging_events:
+                sender_id = event.get("sender", {}).get("id")
+                message = event.get("message", {})
+                text = message.get("text", "")
 
-                    if not sender_id or not text:
-                        continue
+                if not sender_id or not text:
+                    continue
 
-                    print("MESSAGE FROM:", sender_id)
-                    print("TEXT:", text)
+                print("MESSAGE FROM:", sender_id)
+                print("TEXT:", text)
 
-                    save_customer(sender_id)
-                    save_message(sender_id, "user", text)
+                save_customer(sender_id)
+                save_message(sender_id, "user", text)
 
-                    ai_reply = generate_ai_reply(text)
+                ai_reply = generate_ai_reply(text)
+                save_message(sender_id, "bot", ai_reply)
 
-                    save_message(sender_id, "bot", ai_reply)
-                    send_instagram_message(sender_id, ai_reply)
+                send_instagram_message(sender_id, ai_reply)
 
     except Exception as e:
         print("WEBHOOK ERROR:", e)
