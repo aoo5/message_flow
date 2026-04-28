@@ -40,11 +40,6 @@ def verify_webhook(request: Request):
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
 
-    print("VERIFY MODE:", mode)
-    print("VERIFY TOKEN FROM META:", token)
-    print("VERIFY TOKEN FROM ENV:", VERIFY_TOKEN)
-    print("CHALLENGE:", challenge)
-
     if mode == "subscribe" and token == VERIFY_TOKEN:
         return Response(content=challenge or "", media_type="text/plain")
 
@@ -53,7 +48,6 @@ def verify_webhook(request: Request):
 
 def save_customer(instagram_id: str):
     if not supabase:
-        print("SUPABASE not configured")
         return
 
     try:
@@ -67,7 +61,6 @@ def save_customer(instagram_id: str):
 
 def save_message(instagram_id: str, role: str, text: str):
     if not supabase:
-        print("SUPABASE not configured")
         return
 
     try:
@@ -147,6 +140,7 @@ async def receive_webhook(request: Request):
 
     try:
         for entry in data.get("entry", []):
+            bot_instagram_id = entry.get("id")
             messaging_events = entry.get("messaging", [])
 
             for event in messaging_events:
@@ -154,24 +148,31 @@ async def receive_webhook(request: Request):
                 recipient_id = event.get("recipient", {}).get("id")
                 message = event.get("message", {})
 
-                text = message.get("text", "")
+                print("SENDER ID:", sender_id)
+                print("RECIPIENT ID:", recipient_id)
+                print("BOT ID:", bot_instagram_id)
 
-                # تجاهل read / seen / message_edit / أي event بدون نص
+                # تجاهل أي event بدون رسالة نصية
+                text = message.get("text", "")
                 if not text:
                     print("IGNORED EVENT WITHOUT TEXT")
                     continue
 
-                print("SENDER ID:", sender_id)
-                print("RECIPIENT ID:", recipient_id)
+                # تجاهل رسائل البوت نفسه / echo
+                if sender_id == bot_instagram_id:
+                    print("IGNORED BOT SELF MESSAGE")
+                    continue
+
                 print("TEXT:", text)
 
                 save_customer(sender_id)
                 save_message(sender_id, "user", text)
 
                 ai_reply = generate_ai_reply(text)
+
                 save_message(sender_id, "bot", ai_reply)
 
-                # الرد يروح للمرسل الحقيقي فقط
+                # الرد يروح للزبون الحقيقي
                 send_instagram_message(sender_id, ai_reply)
 
     except Exception as e:
