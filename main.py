@@ -6,6 +6,7 @@ from openai import OpenAI
 import requests
 import uvicorn
 import os
+import json
 
 load_dotenv()
 
@@ -17,6 +18,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
+BOT_ID = "17841455543082799"
 
 app = FastAPI(title="Message Flow Backend")
 
@@ -46,17 +49,28 @@ def verify_webhook(request: Request):
     return Response(content="Verification failed", status_code=403)
 
 
-def save_customer(instagram_id: str):
-    if not supabase:
+def send_instagram_message(recipient_id: str, text: str):
+    if not INSTAGRAM_ACCESS_TOKEN:
+        print("INSTAGRAM_ACCESS_TOKEN missing")
         return
 
-    try:
-        supabase.table("customers").upsert(
-            {"instagram_id": instagram_id},
-            on_conflict="instagram_id",
-        ).execute()
-    except Exception as e:
-        print("SAVE CUSTOMER ERROR:", e)
+    url = "https://graph.instagram.com/v21.0/me/messages"
+
+    headers = {
+        "Authorization": f"Bearer {INSTAGRAM_ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "recipient": {"id": recipient_id},
+        "message": {"text": text},
+    }
+
+    response = requests.post(url, headers=headers, json=payload, timeout=20)
+
+    print("INSTAGRAM SEND TO:", recipient_id)
+    print("INSTAGRAM SEND STATUS:", response.status_code)
+    print("INSTAGRAM SEND RESPONSE:", response.text)
 
 
 def save_message(instagram_id: str, role: str, text: str):
@@ -75,6 +89,193 @@ def save_message(instagram_id: str, role: str, text: str):
         print("SAVE MESSAGE ERROR:", e)
 
 
+def save_customer(instagram_id: str):
+    if not supabase:
+        return
+
+    try:
+        supabase.table("customers").upsert(
+            {"instagram_id": instagram_id},
+            on_conflict="instagram_id",
+        ).execute()
+    except Exception as e:
+        print("SAVE CUSTOMER ERROR:", e)
+
+
+def get_pending_order(instagram_id: str):
+    if not supabase:
+        return None
+
+    result = (
+        supabase.table("pending_orders")
+        .select("*")
+        .eq("instagram_id", instagram_id)
+        .limit(1)
+        .execute()
+    )
+
+    if result.data:
+        return result.data[0]
+
+    return None
+
+
+def save_pending_order(instagram_id: str, order_data: dict):
+    if not supabase:
+        return
+
+    payload = {
+        "instagram_id": instagram_id,
+        "customer_name": order_data.get("customer_name"),
+        "phone": order_data.get("phone"),
+        "address": order_data.get("address"),
+        "product_name": order_data.get("product_name"),
+        "quantity": order_data.get("quantity"),
+        "status": "waiting_confirmation",
+    }
+
+    supabase.table("pending_orders").upsert(
+        payload,
+        on_conflict="instagram_id",
+    ).execute()
+
+
+def confirm_pending_order(instagram_id: str):
+    if not supabase:
+        return False
+
+    pending = get_pending_order(instagram_id)
+
+    if not pending:
+        return False
+
+    order_payload = {
+        "instagram_id": instagram_id,
+        "customer_name": pending.get("customer_name"),
+        "phone": pending.get("phone"),
+        "address": pending.get("address"),
+        "product_name": pending.get("product_name"),
+        "quantity": pending.get("quantity"),
+        "status": "confirmed",
+    }
+
+    supabase.table("orders").insert(order_payload).execute()
+
+    supabase.table("pending_orders").delete().eq(
+        "instagram_id", instagram_id
+    ).execute()
+
+    return True
+
+
+def cancel_pending_order(instagram_id: str):
+    if not supabase:
+        return
+
+    supabase.table("pending_orders").delete().eq(
+        "instagram_id", instagram_id
+    ).execute()
+
+
+def is_yes(text: str) -> bool:
+    text = text.strip().lower()
+    yes_words = ["نعم", "اي", "اي نعم", "صح", "صحيح", "تمام", "اوك", "ok", "yes", "y"]
+    return text in yes_words
+
+
+def is_no(text: str) -> bool:
+    text = text.strip().lower()
+    no_words = ["لا", "مو صحيح", "غلط", "كلا", "no", "n"]
+    return text in no_words
+
+
+def extract_order_data(user_message: str) -> dict:
+    if not openai_client:
+        return {
+            "is_order": False,
+            "customer_name": None,
+            "phone": None,
+            "address": None,
+            "product_name": None,
+            "quantity": None,
+        }
+
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": """
+استخرج معلومات الطلب من رسالة زبون إنستغرام.
+أرجع JSON فقط بدون شرح.
+
+الحقول:
+{
+  "is_order": true/false,
+  "customer_name": string/null,
+  "phone": string/null,
+  "address": string/null,
+  "product_name": string/null,
+  "quantity": string/null
+}
+
+إذا الرسالة لا تحتوي طلب، خلي is_order=false.
+إذا معلومة ناقصة خليها null.
+                    """,
+                },
+                {"role": "user", "content": user_message},
+            ],
+        )
+
+        content = response.choices[0].message.content.strip()
+        content = content.replace("```json", "").replace("```", "").strip()
+        return json.loads(content)
+
+    except Exception as e:
+        print("ORDER EXTRACTION ERROR:", e)
+        return {
+            "is_order": False,
+            "customer_name": None,
+            "phone": None,
+            "address": None,
+            "product_name": None,
+            "quantity": None,
+        }
+
+
+def missing_fields(order_data: dict):
+    fields = {
+        "customer_name": "الاسم",
+        "phone": "رقم الهاتف",
+        "address": "العنوان",
+        "product_name": "اسم المنتج",
+        "quantity": "الكمية",
+    }
+
+    missing = []
+
+    for key, label in fields.items():
+        if not order_data.get(key):
+            missing.append(label)
+
+    return missing
+
+
+def build_confirmation_message(order_data: dict) -> str:
+    return f"""
+شكرًا لك! تفضل أجمعلي المعلومات مرة ثانية للتأكيد:
+
+• الاسم: {order_data.get("customer_name")}
+• رقم الهاتف: {order_data.get("phone")}
+• العنوان: {order_data.get("address")}
+• اسم المنتج: {order_data.get("product_name")}
+• الكمية: {order_data.get("quantity")}
+
+هل كلشي صحيح؟
+""".strip()
+
+
 def generate_ai_reply(user_message: str) -> str:
     if not openai_client:
         return "هلا بيك 🌹 شلون أگدر أساعدك؟"
@@ -89,9 +290,9 @@ def generate_ai_reply(user_message: str) -> str:
 أنت بوت مبيعات لمتجر إنستغرام.
 رد باللهجة العراقية بشكل قصير ومهذب.
 إذا الزبون يسأل سؤال عام، جاوبه ببساطة.
-إذا الزبون يريد يطلب، اطلب منه:
+إذا يريد يطلب، اطلب منه:
 الاسم، رقم الهاتف، العنوان، اسم المنتج، الكمية.
-لا تخترع أسعار أو توفر منتجات إذا ما عندك معلومات.
+لا تخترع أسعار.
                     """,
                 },
                 {"role": "user", "content": user_message},
@@ -105,32 +306,35 @@ def generate_ai_reply(user_message: str) -> str:
         return "هلا بيك 🌹 صار خطأ بسيط، اكتب رسالتك مرة ثانية."
 
 
-def send_instagram_message(recipient_id: str, text: str):
-    if not INSTAGRAM_ACCESS_TOKEN:
-        print("INSTAGRAM_ACCESS_TOKEN missing")
-        return
+def handle_message(sender_id: str, text: str) -> str:
+    pending = get_pending_order(sender_id)
 
-    try:
-        url = "https://graph.instagram.com/v21.0/me/messages"
+    if pending:
+        if is_yes(text):
+            confirmed = confirm_pending_order(sender_id)
+            if confirmed:
+                return "تم تأكيد طلبك ✅ راح يتواصل وياك فريقنا قريبًا."
+            return "ما لكيت طلب بانتظار التأكيد. ارسل تفاصيل الطلب مرة ثانية."
 
-        headers = {
-            "Authorization": f"Bearer {INSTAGRAM_ACCESS_TOKEN}",
-            "Content-Type": "application/json",
-        }
+        if is_no(text):
+            cancel_pending_order(sender_id)
+            return "تمام، أرسل التصحيح أو تفاصيل الطلب من جديد."
 
-        payload = {
-            "recipient": {"id": recipient_id},
-            "message": {"text": text},
-        }
+        return "عندي طلب بانتظار التأكيد. إذا المعلومات صحيحة اكتب: نعم، وإذا تحتاج تعديل اكتب: لا."
 
-        response = requests.post(url, headers=headers, json=payload, timeout=20)
+    order_data = extract_order_data(text)
 
-        print("INSTAGRAM SEND TO:", recipient_id)
-        print("INSTAGRAM SEND STATUS:", response.status_code)
-        print("INSTAGRAM SEND RESPONSE:", response.text)
+    if order_data.get("is_order"):
+        missing = missing_fields(order_data)
 
-    except Exception as e:
-        print("INSTAGRAM SEND ERROR:", e)
+        if missing:
+            missing_text = "، ".join(missing)
+            return f"تمام، حتى أكمل الطلب أحتاج منك: {missing_text}"
+
+        save_pending_order(sender_id, order_data)
+        return build_confirmation_message(order_data)
+
+    return generate_ai_reply(text)
 
 
 @app.post("/webhook")
@@ -147,18 +351,16 @@ async def receive_webhook(request: Request):
                 sender_id = event.get("sender", {}).get("id")
                 recipient_id = event.get("recipient", {}).get("id")
                 message = event.get("message", {})
+                text = message.get("text", "")
 
                 print("SENDER ID:", sender_id)
                 print("RECIPIENT ID:", recipient_id)
                 print("BOT ID:", bot_instagram_id)
 
-                # تجاهل أي event بدون رسالة نصية
-                text = message.get("text", "")
                 if not text:
                     print("IGNORED EVENT WITHOUT TEXT")
                     continue
 
-                # تجاهل رسائل البوت نفسه / echo
                 if sender_id == bot_instagram_id:
                     print("IGNORED BOT SELF MESSAGE")
                     continue
@@ -168,12 +370,10 @@ async def receive_webhook(request: Request):
                 save_customer(sender_id)
                 save_message(sender_id, "user", text)
 
-                ai_reply = generate_ai_reply(text)
+                reply = handle_message(sender_id, text)
 
-                save_message(sender_id, "bot", ai_reply)
-
-                # الرد يروح للزبون الحقيقي
-                send_instagram_message(sender_id, ai_reply)
+                save_message(sender_id, "bot", reply)
+                send_instagram_message(sender_id, reply)
 
     except Exception as e:
         print("WEBHOOK ERROR:", e)
