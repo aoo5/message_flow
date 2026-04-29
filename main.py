@@ -3,10 +3,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from supabase import create_client
 from openai import OpenAI
+from passlib.context import CryptContext
+from jose import jwt
 import requests
 import uvicorn
 import os
 import json
+import time
+import re
 
 load_dotenv()
 
@@ -15,11 +19,13 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "my_verify_token")
 INSTAGRAM_ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+JWT_SECRET = os.getenv("JWT_SECRET", "message_flow_secret_123")
 
 STORE_ID = "store_1"
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 app = FastAPI(title="Message Flow Backend")
 
@@ -32,9 +38,98 @@ app.add_middleware(
 )
 
 
+def create_token(data: dict):
+    payload = data.copy()
+    payload["exp"] = int(time.time()) + 60 * 60 * 24 * 7
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+
+def make_store_id(email: str):
+    clean = re.sub(r"[^a-zA-Z0-9]", "_", email.lower())
+    return f"store_{clean}"
+
+
 @app.get("/")
 def root():
     return {"message": "message flow backend working"}
+
+
+@app.post("/auth/register")
+async def register(request: Request):
+    if not supabase:
+        return {"success": False, "error": "Supabase not configured"}
+
+    data = await request.json()
+    email = data.get("email")
+    password = data.get("password")
+
+    if not email or not password:
+        return {"success": False, "error": "Email and password are required"}
+
+    try:
+        existing = supabase.table("app_users").select("*").eq("email", email).execute()
+
+        if existing.data:
+            return {"success": False, "error": "هذا البريد مسجل مسبقاً"}
+
+        store_id = make_store_id(email)
+        password_hash = pwd_context.hash(password)
+
+        supabase.table("app_users").insert(
+            {
+                "email": email,
+                "password_hash": password_hash,
+                "store_id": store_id,
+            }
+        ).execute()
+
+        token = create_token({"email": email, "store_id": store_id})
+
+        return {
+            "success": True,
+            "token": token,
+            "store_id": store_id,
+        }
+
+    except Exception as e:
+        print("REGISTER ERROR:", e)
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/auth/login")
+async def login(request: Request):
+    if not supabase:
+        return {"success": False, "error": "Supabase not configured"}
+
+    data = await request.json()
+    email = data.get("email")
+    password = data.get("password")
+
+    if not email or not password:
+        return {"success": False, "error": "Email and password are required"}
+
+    try:
+        result = supabase.table("app_users").select("*").eq("email", email).limit(1).execute()
+
+        if not result.data:
+            return {"success": False, "error": "بيانات الدخول غير صحيحة"}
+
+        user = result.data[0]
+
+        if not pwd_context.verify(password, user["password_hash"]):
+            return {"success": False, "error": "بيانات الدخول غير صحيحة"}
+
+        token = create_token({"email": email, "store_id": user["store_id"]})
+
+        return {
+            "success": True,
+            "token": token,
+            "store_id": user["store_id"],
+        }
+
+    except Exception as e:
+        print("LOGIN ERROR:", e)
+        return {"success": False, "error": str(e)}
 
 
 @app.get("/webhook")
@@ -492,40 +587,6 @@ async def update_order(request: Request):
         print("UPDATE ORDER ERROR:", e)
         return {"success": False, "error": str(e)}
 
-@app.post("/register")
-async def register(request: Request):
-    data = await request.json()
-
-    email = data.get("email")
-    password = data.get("password")
-
-    store_id = f"store_{email}"
-
-    supabase.table("users").insert({
-        "email": email,
-        "password": password,
-        "store_id": store_id
-    }).execute()
-
-    return {"success": True}
-
-@app.post("/login")
-async def login(request: Request):
-    data = await request.json()
-
-    email = data.get("email")
-    password = data.get("password")
-
-    result = supabase.table("users").select("*") \
-        .eq("email", email).eq("password", password).execute()
-
-    if result.data:
-        return {
-            "success": True,
-            "store_id": result.data[0]["store_id"]
-        }
-
-    return {"success": False}
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
