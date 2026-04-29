@@ -456,6 +456,28 @@ def get_orders():
     result = supabase.table("orders").select("*").order("id", desc=True).execute()
     return {"orders": result.data}
 
+@app.post("/update-order")
+async def update_order(request: Request):
+    if not supabase:
+        return {"success": False, "error": "Supabase not configured"}
+
+    data = await request.json()
+    order_id = data.get("id")
+    status = data.get("status")
+
+    if not order_id or not status:
+        return {"success": False, "error": "Missing id or status"}
+
+    try:
+        supabase.table("orders").update(
+            {"status": status}
+        ).eq("id", order_id).execute()
+
+        return {"success": True}
+
+    except Exception as e:
+        print("UPDATE ORDER ERROR:", e)
+        return {"success": False, "error": str(e)}
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
