@@ -492,6 +492,40 @@ async def update_order(request: Request):
         print("UPDATE ORDER ERROR:", e)
         return {"success": False, "error": str(e)}
 
+@app.post("/register")
+async def register(request: Request):
+    data = await request.json()
+
+    email = data.get("email")
+    password = data.get("password")
+
+    store_id = f"store_{email}"
+
+    supabase.table("users").insert({
+        "email": email,
+        "password": password,
+        "store_id": store_id
+    }).execute()
+
+    return {"success": True}
+
+@app.post("/login")
+async def login(request: Request):
+    data = await request.json()
+
+    email = data.get("email")
+    password = data.get("password")
+
+    result = supabase.table("users").select("*") \
+        .eq("email", email).eq("password", password).execute()
+
+    if result.data:
+        return {
+            "success": True,
+            "store_id": result.data[0]["store_id"]
+        }
+
+    return {"success": False}
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
