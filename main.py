@@ -16,6 +16,8 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "my_verify_token")
 INSTAGRAM_ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+STORE_ID = "store_1"
+
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
@@ -109,6 +111,7 @@ def get_pending_order(instagram_id: str):
             supabase.table("pending_orders")
             .select("*")
             .eq("instagram_id", instagram_id)
+            .eq("store_id", STORE_ID)
             .limit(1)
             .execute()
         )
@@ -127,6 +130,7 @@ def save_pending_order(instagram_id: str, order_data: dict):
         return
 
     payload = {
+        "store_id": STORE_ID,
         "instagram_id": instagram_id,
         "customer_name": order_data.get("customer_name"),
         "phone": order_data.get("phone"),
@@ -155,6 +159,7 @@ def confirm_pending_order(instagram_id: str):
         return False
 
     order_payload = {
+        "store_id": STORE_ID,
         "instagram_id": instagram_id,
         "customer_name": pending.get("customer_name"),
         "phone": pending.get("phone"),
@@ -169,7 +174,7 @@ def confirm_pending_order(instagram_id: str):
 
         supabase.table("pending_orders").delete().eq(
             "instagram_id", instagram_id
-        ).execute()
+        ).eq("store_id", STORE_ID).execute()
 
         return True
 
@@ -185,7 +190,7 @@ def cancel_pending_order(instagram_id: str):
     try:
         supabase.table("pending_orders").delete().eq(
             "instagram_id", instagram_id
-        ).execute()
+        ).eq("store_id", STORE_ID).execute()
     except Exception as e:
         print("CANCEL PENDING ORDER ERROR:", e)
 
@@ -311,7 +316,7 @@ def missing_fields(order_data: dict):
 
 def build_confirmation_message(order_data: dict) -> str:
     return f"""
-شكرًا لك! تفضل أجمعلي المعلومات مرة ثانية للتأكيد:
+شكرًا لك! هاي معلومات طلبك للتأكيد:
 
 • الاسم: {order_data.get("customer_name")}
 • رقم الهاتف: {order_data.get("phone")}
@@ -453,8 +458,16 @@ def get_orders():
     if not supabase:
         return {"orders": []}
 
-    result = supabase.table("orders").select("*").order("id", desc=True).execute()
+    result = (
+        supabase.table("orders")
+        .select("*")
+        .eq("store_id", STORE_ID)
+        .order("id", desc=True)
+        .execute()
+    )
+
     return {"orders": result.data}
+
 
 @app.post("/update-order")
 async def update_order(request: Request):
@@ -471,13 +484,14 @@ async def update_order(request: Request):
     try:
         supabase.table("orders").update(
             {"status": status}
-        ).eq("id", order_id).execute()
+        ).eq("id", order_id).eq("store_id", STORE_ID).execute()
 
         return {"success": True}
 
     except Exception as e:
         print("UPDATE ORDER ERROR:", e)
         return {"success": False, "error": str(e)}
+
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
