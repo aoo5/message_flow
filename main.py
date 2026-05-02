@@ -429,7 +429,55 @@ def build_confirmation_message(order_data: dict) -> str:
 """.strip()
 
 
-def marketing_reply() -> str:
+def generate_ai_reply(user_message: str) -> str:
+    if not openai_client:
+        return "آسف، ما أقدر أرد على هذا السؤال حالياً. حاول مرة ثانية لاحقاً."
+
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "أنت مساعد ذكي يساعد الزبائن باللغة العربية."},
+                {"role": "user", "content": user_message},
+            ],
+            max_tokens=150,
+        )
+
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print("AI REPLY ERROR:", e)
+        return "آسف، صار خطأ أثناء تجهيز الرد. حاول ترسل رسالتك مرة ثانية."
+
+
+def is_marketing_yes(text: str) -> bool:
+    text = text.strip().lower()
+    yes_words = [
+        "اي", "إي", "نعم", "اي نعم", "تمام", "اوكي", "اوك", "ok",
+        "مهتم", "اشرح", "شلون", "كمل", "اريد", "شنو", "تفاصيل", "yes"
+    ]
+
+    for word in yes_words:
+        if word in text:
+            return True
+
+    return False
+
+
+def is_marketing_no(text: str) -> bool:
+    text = text.strip().lower()
+    no_words = [
+        "لا", "كلا", "مو مهتم", "ما اريد", "ما احتاج", "بعدين",
+        "لاحقا", "مو هسه", "no", "not interested"
+    ]
+
+    for word in no_words:
+        if word in text:
+            return True
+
+    return False
+
+
+def marketing_intro_reply() -> str:
     return """
 هلا 👋
 
@@ -441,47 +489,59 @@ def marketing_reply() -> str:
 • تثبيت الطلب بعد تأكيد الزبون
 • ترتيب الطلبات داخل لوحة تحكم سهلة
 
-الخدمة مناسبة للمتاجر اللي عندها ضغط بالرسائل وتريد تنظم الطلبات بدون ما تضيع بينها.
-
 💰 الاشتراك الشهري يبدأ من 15$ فقط.
 
-إذا تحب، أقدر أشرح لك شلون يشتغل النظام خلال دقيقة 🚀
+إذا تحب أشرح لك شلون يشتغل النظام بالتفصيل، اكتب: نعم.
 """.strip()
 
 
-def generate_ai_reply(user_message: str) -> str:
-    if not openai_client:
-        return "هلا بيك 🌹 شلون أگدر أساعدك؟"
+def marketing_details_reply() -> str:
+    return """
+أكيد، أوضح لك أكثر 👇
 
-    try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": """
-أنت بوت مبيعات لمتجر إنستغرام.
-رد باللهجة العراقية بشكل قصير ومهذب.
-إذا الزبون يسأل سؤال عام، جاوبه ببساطة.
-إذا يريد يطلب، اطلب منه:
-الاسم، رقم الهاتف، العنوان، اسم المنتج، الكمية.
-لا تخترع أسعار.
-                    """,
-                },
-                {"role": "user", "content": user_message},
-            ],
-        )
+Message Flow هو نظام يساعد متاجر الإنستغرام على إدارة الرسائل والطلبات بدون فوضى.
 
-        return response.choices[0].message.content
+المميزات:
+• يرد على الزبائن تلقائيًا 24/7
+• يسأل الزبون عن معلومات الطلب
+• يجمع الاسم، الرقم، العنوان، المنتج والكمية
+• يعرض الطلب على الزبون للتأكيد
+• يحفظ الطلب داخل لوحة تحكم مرتبة
+• يقلل ضغط الردود على الموظفين
+• يقلل ضياع الطلبات داخل الـ DM
+• مناسب للملابس، العطور، الإكسسوارات، المنتجات المنزلية وغيرها
 
-    except Exception as e:
-        print("AI ERROR:", e)
-        return "هلا بيك 🌹 صار خطأ بسيط، اكتب رسالتك مرة ثانية."
+الفكرة مو استبدال الموظف، الفكرة تنظيم الشغل وتسريع الطلبات.
+
+السعر يبدأ من 15$ شهريًا، وأقدر أسوي تجربة بسيطة حتى تشوفه يشتغل عمليًا.
+""".strip()
+
+
+def marketing_rejection_reply() -> str:
+    return """
+تمام، ماكو مشكلة أبدًا 🌹
+
+بس حتى أوضح الفكرة: النظام مو ضروري لكل متجر، لكنه يفيد المتاجر اللي عدها ضغط رسائل أو طلبات تضيع بالخاص.
+
+إذا يومًا احتجتوا:
+• رد أسرع على الزبائن
+• ترتيب الطلبات
+• تقليل ضغط الرسائل
+• لوحة تحكم للطلبات
+
+أقدر أجهز لكم تجربة بسيطة بدون التزام.
+""".strip()
 
 
 def handle_message(sender_id: str, text: str) -> str:
     if MARKETING_MODE:
-        return marketing_reply()
+        if is_marketing_yes(text):
+            return marketing_details_reply()
+
+        if is_marketing_no(text):
+            return marketing_rejection_reply()
+
+        return marketing_intro_reply()
 
     pending = get_pending_order(sender_id)
 
@@ -513,8 +573,6 @@ def handle_message(sender_id: str, text: str) -> str:
         return build_confirmation_message(order_data)
 
     return generate_ai_reply(text)
-
-
 @app.post("/webhook")
 async def receive_webhook(request: Request):
     data = await request.json()
