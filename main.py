@@ -23,6 +23,10 @@ JWT_SECRET = os.getenv("JWT_SECRET", "message_flow_secret_123")
 
 STORE_ID = "store_1"
 
+# خليها True حتى يرد برسالة تسويقية مؤقتاً
+# من تريد يرجع بوت طلبات، خليها False
+MARKETING_MODE = True
+
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -73,6 +77,7 @@ async def register(request: Request):
             return {"success": False, "error": "هذا البريد مسجل مسبقاً"}
 
         store_id = make_store_id(email)
+        password = password[:72]
         password_hash = pwd_context.hash(password)
 
         supabase.table("app_users").insert(
@@ -115,6 +120,7 @@ async def login(request: Request):
             return {"success": False, "error": "بيانات الدخول غير صحيحة"}
 
         user = result.data[0]
+        password = password[:72]
 
         if not pwd_context.verify(password, user["password_hash"]):
             return {"success": False, "error": "بيانات الدخول غير صحيحة"}
@@ -423,6 +429,26 @@ def build_confirmation_message(order_data: dict) -> str:
 """.strip()
 
 
+def marketing_reply() -> str:
+    return """
+هلا 👋
+
+أنا بوت مبيعات مخصص لمتاجر الإنستغرام.
+
+أساعد المتجر على:
+• الرد على رسائل الزبائن تلقائيًا
+• جمع الطلبات: الاسم، الرقم، العنوان، المنتج والكمية
+• تثبيت الطلب بعد تأكيد الزبون
+• ترتيب الطلبات داخل لوحة تحكم سهلة
+
+الخدمة مناسبة للمتاجر اللي عندها ضغط بالرسائل وتريد تنظم الطلبات بدون ما تضيع بينها.
+
+💰 الاشتراك الشهري يبدأ من 15$ فقط.
+
+إذا تحب، أقدر أشرح لك شلون يشتغل النظام خلال دقيقة 🚀
+""".strip()
+
+
 def generate_ai_reply(user_message: str) -> str:
     if not openai_client:
         return "هلا بيك 🌹 شلون أگدر أساعدك؟"
@@ -454,6 +480,9 @@ def generate_ai_reply(user_message: str) -> str:
 
 
 def handle_message(sender_id: str, text: str) -> str:
+    if MARKETING_MODE:
+        return marketing_reply()
+
     pending = get_pending_order(sender_id)
 
     if pending:
