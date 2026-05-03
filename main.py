@@ -23,9 +23,12 @@ JWT_SECRET = os.getenv("JWT_SECRET", "message_flow_secret_123")
 
 STORE_ID = "store_1"
 
-# خليها True حتى يرد برسالة تسويقية مؤقتاً
-# من تريد يرجع بوت طلبات، خليها False
-MARKETING_MODE = True
+BOT_SETTINGS = {
+    "welcome_message": "هلا بيك، شلون أگدر أساعدك؟",
+    "marketing_mode": True,
+    "order_collection": True,
+    "telegram_enabled": False,
+}
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
@@ -56,6 +59,23 @@ def make_store_id(email: str):
 @app.get("/")
 def root():
     return {"message": "message flow backend working"}
+
+
+@app.get("/settings")
+def get_settings():
+    return BOT_SETTINGS
+
+
+@app.post("/settings")
+async def update_settings(request: Request):
+    data = await request.json()
+
+    BOT_SETTINGS["welcome_message"] = data.get("welcome_message", BOT_SETTINGS["welcome_message"])
+    BOT_SETTINGS["marketing_mode"] = data.get("marketing_mode", BOT_SETTINGS["marketing_mode"])
+    BOT_SETTINGS["order_collection"] = data.get("order_collection", BOT_SETTINGS["order_collection"])
+    BOT_SETTINGS["telegram_enabled"] = data.get("telegram_enabled", BOT_SETTINGS["telegram_enabled"])
+
+    return {"success": True, "settings": BOT_SETTINGS}
 
 
 @app.post("/auth/register")
@@ -90,11 +110,7 @@ async def register(request: Request):
 
         token = create_token({"email": email, "store_id": store_id})
 
-        return {
-            "success": True,
-            "token": token,
-            "store_id": store_id,
-        }
+        return {"success": True, "token": token, "store_id": store_id}
 
     except Exception as e:
         print("REGISTER ERROR:", e)
@@ -127,11 +143,7 @@ async def login(request: Request):
 
         token = create_token({"email": email, "store_id": user["store_id"]})
 
-        return {
-            "success": True,
-            "token": token,
-            "store_id": user["store_id"],
-        }
+        return {"success": True, "token": token, "store_id": user["store_id"]}
 
     except Exception as e:
         print("LOGIN ERROR:", e)
@@ -298,21 +310,7 @@ def cancel_pending_order(instagram_id: str):
 
 def is_yes(text: str) -> bool:
     text = text.strip().lower()
-
-    yes_words = [
-        "نعم",
-        "اي",
-        "إي",
-        "اي نعم",
-        "صح",
-        "صحيح",
-        "صحيحه",
-        "تمام",
-        "اوك",
-        "ok",
-        "yes",
-        "y",
-    ]
+    yes_words = ["نعم", "اي", "إي", "اي نعم", "صح", "صحيح", "صحيحه", "تمام", "اوك", "ok", "yes", "y"]
 
     for word in yes_words:
         if word.lower() in text:
@@ -323,23 +321,91 @@ def is_yes(text: str) -> bool:
 
 def is_no(text: str) -> bool:
     text = text.strip().lower()
-
-    no_words = [
-        "لا",
-        "كلا",
-        "مو",
-        "غلط",
-        "خطأ",
-        "تعديل",
-        "no",
-        "n",
-    ]
+    no_words = ["لا", "كلا", "مو", "غلط", "خطأ", "تعديل", "no", "n"]
 
     for word in no_words:
         if word.lower() in text:
             return True
 
     return False
+
+
+def is_marketing_yes(text: str) -> bool:
+    text = text.strip().lower()
+    yes_words = ["اي", "إي", "نعم", "اي نعم", "تمام", "اوكي", "اوك", "ok", "مهتم", "اشرح", "شلون", "كمل", "اريد", "شنو", "تفاصيل", "yes"]
+
+    for word in yes_words:
+        if word in text:
+            return True
+
+    return False
+
+
+def is_marketing_no(text: str) -> bool:
+    text = text.strip().lower()
+    no_words = ["لا", "كلا", "مو مهتم", "ما اريد", "ما احتاج", "بعدين", "لاحقا", "مو هسه", "no", "not interested"]
+
+    for word in no_words:
+        if word in text:
+            return True
+
+    return False
+
+
+def marketing_intro_reply() -> str:
+    return """
+هلا 👋
+
+أنا بوت مبيعات مخصص لمتاجر الإنستغرام.
+
+أساعد المتجر على:
+* الرد على رسائل الزبائن تلقائيًا
+* جمع الطلبات: الاسم، الرقم، العنوان، المنتج والكمية
+* تثبيت الطلب بعد تأكيد الزبون
+* ترتيب الطلبات داخل لوحة تحكم سهلة
+
+💰 الاشتراك الشهري يبدأ من 15$ فقط.
+
+إذا تحب أشرح لك شلون يشتغل النظام بالتفصيل، اكتب: نعم.
+""".strip()
+
+
+def marketing_details_reply() -> str:
+    return """
+أكيد، أوضح لك أكثر 👇
+
+Message Flow هو نظام يساعد متاجر الإنستغرام على إدارة الرسائل والطلبات بدون فوضى.
+
+المميزات:
+* يرد على الزبائن تلقائيًا 24/7
+* يسأل الزبون عن معلومات الطلب
+* يجمع الاسم، الرقم، العنوان، المنتج والكمية
+* يعرض الطلب على الزبون للتأكيد
+* يحفظ الطلب داخل لوحة تحكم مرتبة
+* يقلل ضغط الردود على الموظفين
+* يقلل ضياع الطلبات داخل الـ DM
+* مناسب للملابس، العطور، الإكسسوارات، المنتجات المنزلية وغيرها
+
+الفكرة مو استبدال الموظف، الفكرة تنظيم الشغل وتسريع الطلبات.
+
+السعر يبدأ من 15$ شهريًا، وأقدر أسوي تجربة بسيطة حتى تشوفه يشتغل عمليًا.
+""".strip()
+
+
+def marketing_rejection_reply() -> str:
+    return """
+تمام، ماكو مشكلة أبدًا 🌹
+
+بس حتى أوضح الفكرة: النظام مو ضروري لكل متجر، لكنه يفيد المتاجر اللي عدها ضغط رسائل أو طلبات تضيع بالخاص.
+
+إذا يومًا احتجتوا:
+* رد أسرع على الزبائن
+* ترتيب الطلبات
+* تقليل ضغط الرسائل
+* لوحة تحكم للطلبات
+
+أقدر أجهز لكم تجربة بسيطة بدون التزام.
+""".strip()
 
 
 def extract_order_data(user_message: str) -> dict:
@@ -382,7 +448,7 @@ def extract_order_data(user_message: str) -> dict:
         )
 
         content = response.choices[0].message.content.strip()
-        content = content.replace("```json", "").replace("```", "").strip()
+        content = content.replace("json", "").replace("", "").strip()
         return json.loads(content)
 
     except Exception as e:
@@ -419,11 +485,11 @@ def build_confirmation_message(order_data: dict) -> str:
     return f"""
 شكرًا لك! هاي معلومات طلبك للتأكيد:
 
-• الاسم: {order_data.get("customer_name")}
-• رقم الهاتف: {order_data.get("phone")}
-• العنوان: {order_data.get("address")}
-• اسم المنتج: {order_data.get("product_name")}
-• الكمية: {order_data.get("quantity")}
+* الاسم: {order_data.get("customer_name")}
+* رقم الهاتف: {order_data.get("phone")}
+* العنوان: {order_data.get("address")}
+* اسم المنتج: {order_data.get("product_name")}
+* الكمية: {order_data.get("quantity")}
 
 هل كلشي صحيح؟
 """.strip()
@@ -431,110 +497,36 @@ def build_confirmation_message(order_data: dict) -> str:
 
 def generate_ai_reply(user_message: str) -> str:
     if not openai_client:
-        return "آسف، ما أقدر أرد على هذا السؤال حالياً. حاول مرة ثانية لاحقاً."
+        return BOT_SETTINGS["welcome_message"]
 
     try:
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "أنت مساعد ذكي يساعد الزبائن باللغة العربية."},
+                {
+                    "role": "system",
+                    "content": """
+أنت بوت مبيعات لمتجر إنستغرام.
+رد باللهجة العراقية بشكل قصير ومهذب.
+إذا الزبون يسأل سؤال عام، جاوبه ببساطة.
+إذا يريد يطلب، اطلب منه:
+الاسم، رقم الهاتف، العنوان، اسم المنتج، الكمية.
+لا تخترع أسعار.
+                    """,
+                },
                 {"role": "user", "content": user_message},
             ],
-            max_tokens=150,
         )
 
-        return response.choices[0].message.content.strip()
+        return response.choices[0].message.content
+
     except Exception as e:
-        print("AI REPLY ERROR:", e)
-        return "آسف، صار خطأ أثناء تجهيز الرد. حاول ترسل رسالتك مرة ثانية."
-
-
-def is_marketing_yes(text: str) -> bool:
-    text = text.strip().lower()
-    yes_words = [
-        "اي", "إي", "نعم", "اي نعم", "تمام", "اوكي", "اوك", "ok",
-        "مهتم", "اشرح", "شلون", "كمل", "اريد", "شنو", "تفاصيل", "yes"
-    ]
-
-    for word in yes_words:
-        if word in text:
-            return True
-
-    return False
-
-
-def is_marketing_no(text: str) -> bool:
-    text = text.strip().lower()
-    no_words = [
-        "لا", "كلا", "مو مهتم", "ما اريد", "ما احتاج", "بعدين",
-        "لاحقا", "مو هسه", "no", "not interested"
-    ]
-
-    for word in no_words:
-        if word in text:
-            return True
-
-    return False
-
-
-def marketing_intro_reply() -> str:
-    return """
-هلا 👋
-
-أنا بوت مبيعات مخصص لمتاجر الإنستغرام.
-
-أساعد المتجر على:
-• الرد على رسائل الزبائن تلقائيًا
-• جمع الطلبات: الاسم، الرقم، العنوان، المنتج والكمية
-• تثبيت الطلب بعد تأكيد الزبون
-• ترتيب الطلبات داخل لوحة تحكم سهلة
-
-💰 الاشتراك الشهري يبدأ من 15$ فقط.
-
-إذا تحب أشرح لك شلون يشتغل النظام بالتفصيل، اكتب: نعم.
-""".strip()
-
-
-def marketing_details_reply() -> str:
-    return """
-أكيد، أوضح لك أكثر 👇
-
-Message Flow هو نظام يساعد متاجر الإنستغرام على إدارة الرسائل والطلبات بدون فوضى.
-
-المميزات:
-• يرد على الزبائن تلقائيًا 24/7
-• يسأل الزبون عن معلومات الطلب
-• يجمع الاسم، الرقم، العنوان، المنتج والكمية
-• يعرض الطلب على الزبون للتأكيد
-• يحفظ الطلب داخل لوحة تحكم مرتبة
-• يقلل ضغط الردود على الموظفين
-• يقلل ضياع الطلبات داخل الـ DM
-• مناسب للملابس، العطور، الإكسسوارات، المنتجات المنزلية وغيرها
-
-الفكرة مو استبدال الموظف، الفكرة تنظيم الشغل وتسريع الطلبات.
-
-السعر يبدأ من 15$ شهريًا، وأقدر أسوي تجربة بسيطة حتى تشوفه يشتغل عمليًا.
-""".strip()
-
-
-def marketing_rejection_reply() -> str:
-    return """
-تمام، ماكو مشكلة أبدًا 🌹
-
-بس حتى أوضح الفكرة: النظام مو ضروري لكل متجر، لكنه يفيد المتاجر اللي عدها ضغط رسائل أو طلبات تضيع بالخاص.
-
-إذا يومًا احتجتوا:
-• رد أسرع على الزبائن
-• ترتيب الطلبات
-• تقليل ضغط الرسائل
-• لوحة تحكم للطلبات
-
-أقدر أجهز لكم تجربة بسيطة بدون التزام.
-""".strip()
+        print("AI ERROR:", e)
+        return "هلا بيك 🌹 صار خطأ بسيط، اكتب رسالتك مرة ثانية."
 
 
 def handle_message(sender_id: str, text: str) -> str:
-    if MARKETING_MODE:
+    if BOT_SETTINGS["marketing_mode"]:
         if is_marketing_yes(text):
             return marketing_details_reply()
 
@@ -542,6 +534,9 @@ def handle_message(sender_id: str, text: str) -> str:
             return marketing_rejection_reply()
 
         return marketing_intro_reply()
+
+    if not BOT_SETTINGS["order_collection"]:
+        return BOT_SETTINGS["welcome_message"]
 
     pending = get_pending_order(sender_id)
 
@@ -573,6 +568,8 @@ def handle_message(sender_id: str, text: str) -> str:
         return build_confirmation_message(order_data)
 
     return generate_ai_reply(text)
+
+
 @app.post("/webhook")
 async def receive_webhook(request: Request):
     data = await request.json()
@@ -675,6 +672,6 @@ async def update_order(request: Request):
         return {"success": False, "error": str(e)}
 
 
-if __name__ == "__main__":
+if __name__ == "_main_":
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
