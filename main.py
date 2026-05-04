@@ -712,6 +712,10 @@ def generate_ai_reply(user_message: str) -> str:
 
 
 def handle_message(sender_id: str, text: str) -> str:
+    
+    if not BOT_SETTINGS["is_enabled"]:
+        return 
+
     if BOT_SETTINGS["marketing_mode"]:
         if is_marketing_yes(text):
             return marketing_details_reply()
