@@ -70,10 +70,18 @@ def get_settings():
 async def update_settings(request: Request):
     data = await request.json()
 
-    BOT_SETTINGS["welcome_message"] = data.get("welcome_message", BOT_SETTINGS["welcome_message"])
-    BOT_SETTINGS["marketing_mode"] = data.get("marketing_mode", BOT_SETTINGS["marketing_mode"])
-    BOT_SETTINGS["order_collection"] = data.get("order_collection", BOT_SETTINGS["order_collection"])
-    BOT_SETTINGS["telegram_enabled"] = data.get("telegram_enabled", BOT_SETTINGS["telegram_enabled"])
+    BOT_SETTINGS["welcome_message"] = data.get(
+        "welcome_message", BOT_SETTINGS["welcome_message"]
+    )
+    BOT_SETTINGS["marketing_mode"] = data.get(
+        "marketing_mode", BOT_SETTINGS["marketing_mode"]
+    )
+    BOT_SETTINGS["order_collection"] = data.get(
+        "order_collection", BOT_SETTINGS["order_collection"]
+    )
+    BOT_SETTINGS["telegram_enabled"] = data.get(
+        "telegram_enabled", BOT_SETTINGS["telegram_enabled"]
+    )
 
     return {"success": True, "settings": BOT_SETTINGS}
 
@@ -130,7 +138,13 @@ async def login(request: Request):
         return {"success": False, "error": "Email and password are required"}
 
     try:
-        result = supabase.table("app_users").select("*").eq("email", email).limit(1).execute()
+        result = (
+            supabase.table("app_users")
+            .select("*")
+            .eq("email", email)
+            .limit(1)
+            .execute()
+        )
 
         if not result.data:
             return {"success": False, "error": "بيانات الدخول غير صحيحة"}
@@ -310,7 +324,20 @@ def cancel_pending_order(instagram_id: str):
 
 def is_yes(text: str) -> bool:
     text = text.strip().lower()
-    yes_words = ["نعم", "اي", "إي", "اي نعم", "صح", "صحيح", "صحيحه", "تمام", "اوك", "ok", "yes", "y"]
+    yes_words = [
+        "نعم",
+        "اي",
+        "إي",
+        "اي نعم",
+        "صح",
+        "صحيح",
+        "صحيحه",
+        "تمام",
+        "اوك",
+        "ok",
+        "yes",
+        "y",
+    ]
 
     for word in yes_words:
         if word.lower() in text:
@@ -332,7 +359,24 @@ def is_no(text: str) -> bool:
 
 def is_marketing_yes(text: str) -> bool:
     text = text.strip().lower()
-    yes_words = ["اي", "إي", "نعم", "اي نعم", "تمام", "اوكي", "اوك", "ok", "مهتم", "اشرح", "شلون", "كمل", "اريد", "شنو", "تفاصيل", "yes"]
+    yes_words = [
+        "اي",
+        "إي",
+        "نعم",
+        "اي نعم",
+        "تمام",
+        "اوكي",
+        "اوك",
+        "ok",
+        "مهتم",
+        "اشرح",
+        "شلون",
+        "كمل",
+        "اريد",
+        "شنو",
+        "تفاصيل",
+        "yes",
+    ]
 
     for word in yes_words:
         if word in text:
@@ -343,7 +387,18 @@ def is_marketing_yes(text: str) -> bool:
 
 def is_marketing_no(text: str) -> bool:
     text = text.strip().lower()
-    no_words = ["لا", "كلا", "مو مهتم", "ما اريد", "ما احتاج", "بعدين", "لاحقا", "مو هسه", "no", "not interested"]
+    no_words = [
+        "لا",
+        "كلا",
+        "مو مهتم",
+        "ما اريد",
+        "ما احتاج",
+        "بعدين",
+        "لاحقا",
+        "مو هسه",
+        "no",
+        "not interested",
+    ]
 
     for word in no_words:
         if word in text:
@@ -406,6 +461,136 @@ def marketing_rejection_reply() -> str:
 
 أقدر أجهز لكم تجربة بسيطة بدون التزام.
 """.strip()
+
+
+def get_products():
+    if not supabase:
+        return []
+
+    try:
+        result = (
+            supabase.table("products")
+            .select("*")
+            .eq("store_id", STORE_ID)
+            .order("id", desc=True)
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        print("GET PRODUCTS ERROR:", e)
+        return []
+
+
+def find_product_by_text(text: str):
+    products = get_products()
+    normalized_text = text.lower().strip()
+
+    for product in products:
+        name = str(product.get("name") or "").lower().strip()
+        post_url = str(product.get("post_url") or "").lower().strip()
+
+        if name and name in normalized_text:
+            return product
+
+        if post_url and post_url in normalized_text:
+            return product
+
+    return None
+
+
+def build_product_reply(product: dict) -> str:
+    available_text = "متوفر ✅" if product.get("is_available") else "غير متوفر حاليًا ❌"
+
+    return f"""
+هذا المنتج {available_text}
+
+الاسم: {product.get("name") or "-"}
+السعر: {product.get("price") or "-"}
+الوصف: {product.get("description") or "-"}
+
+إذا تحب أثبتلك الطلب، ارسل:
+الاسم + رقم الهاتف + العنوان + الكمية
+""".strip()
+
+
+@app.get("/products")
+def products_list():
+    return {"products": get_products()}
+
+
+@app.post("/products")
+async def add_product(request: Request):
+    if not supabase:
+        return {"success": False, "error": "Supabase not configured"}
+
+    data = await request.json()
+
+    try:
+        payload = {
+            "store_id": STORE_ID,
+            "name": data.get("name"),
+            "price": data.get("price"),
+            "description": data.get("description"),
+            "post_url": data.get("post_url"),
+            "image_url": data.get("image_url"),
+            "is_available": data.get("is_available", True),
+        }
+
+        result = supabase.table("products").insert(payload).execute()
+        return {"success": True, "product": result.data[0] if result.data else None}
+
+    except Exception as e:
+        print("ADD PRODUCT ERROR:", e)
+        return {"success": False, "error": str(e)}
+
+
+@app.put("/products/{product_id}")
+async def update_product(product_id: int, request: Request):
+    if not supabase:
+        return {"success": False, "error": "Supabase not configured"}
+
+    data = await request.json()
+
+    try:
+        payload = {
+            "name": data.get("name"),
+            "price": data.get("price"),
+            "description": data.get("description"),
+            "post_url": data.get("post_url"),
+            "image_url": data.get("image_url"),
+            "is_available": data.get("is_available", True),
+        }
+
+        result = (
+            supabase.table("products")
+            .update(payload)
+            .eq("id", product_id)
+            .eq("store_id", STORE_ID)
+            .execute()
+        )
+
+        return {"success": True, "product": result.data[0] if result.data else None}
+
+    except Exception as e:
+        print("UPDATE PRODUCT ERROR:", e)
+        return {"success": False, "error": str(e)}
+
+
+@app.delete("/products/{product_id}")
+def delete_product(product_id: int):
+    if not supabase:
+        return {"success": False, "error": "Supabase not configured"}
+
+    try:
+        supabase.table("products").delete().eq("id", product_id).eq(
+            "store_id", STORE_ID
+        ).execute()
+
+        return {"success": True}
+
+    except Exception as e:
+        print("DELETE PRODUCT ERROR:", e)
+        return {"success": False, "error": str(e)}
 
 
 def extract_order_data(user_message: str) -> dict:
@@ -535,6 +720,11 @@ def handle_message(sender_id: str, text: str) -> str:
 
         return marketing_intro_reply()
 
+    product = find_product_by_text(text)
+
+    if product:
+        return build_product_reply(product)
+
     if not BOT_SETTINGS["order_collection"]:
         return BOT_SETTINGS["welcome_message"]
 
@@ -661,9 +851,9 @@ async def update_order(request: Request):
         return {"success": False, "error": "Missing id or status"}
 
     try:
-        supabase.table("orders").update(
-            {"status": status}
-        ).eq("id", order_id).eq("store_id", STORE_ID).execute()
+        supabase.table("orders").update({"status": status}).eq(
+            "id", order_id
+        ).eq("store_id", STORE_ID).execute()
 
         return {"success": True}
 
@@ -672,6 +862,6 @@ async def update_order(request: Request):
         return {"success": False, "error": str(e)}
 
 
-if __name__ == "_main_":
+if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
