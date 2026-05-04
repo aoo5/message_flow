@@ -28,6 +28,7 @@ BOT_SETTINGS = {
     "marketing_mode": True,
     "order_collection": True,
     "telegram_enabled": False,
+    "is_enabled": True,
 }
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
@@ -82,7 +83,7 @@ async def update_settings(request: Request):
     BOT_SETTINGS["telegram_enabled"] = data.get(
         "telegram_enabled", BOT_SETTINGS["telegram_enabled"]
     )
-
+    BOT_SETTINGS["is_enabled"] = data.get("is_enabled", BOT_SETTINGS["is_enabled"])
     return {"success": True, "settings": BOT_SETTINGS}
 
 
@@ -796,7 +797,7 @@ async def receive_webhook(request: Request):
                 reply = handle_message(sender_id, text)
 
                 save_message(sender_id, "bot", reply)
-                send_instagram_message(sender_id, reply)
+                if reply:send_instagram_message(sender_id, reply)
 
     except Exception as e:
         print("WEBHOOK ERROR:", e)
