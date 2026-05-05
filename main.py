@@ -788,13 +788,15 @@ async def receive_webhook(request: Request):
                 recipient_id = event.get("recipient", {}).get("id")
                 message = event.get("message", {})
                 text = message.get("text", "")
+                attachments = message.get("attachments", [])
+                print("ATTACHMENTS:", attachments)
 
                 print("SENDER ID:", sender_id)
                 print("RECIPIENT ID:", recipient_id)
                 print("BOT ID:", bot_instagram_id)
 
-                if not text:
-                    print("IGNORED EVENT WITHOUT TEXT")
+                if not text and not attachments:
+                    print("IGNORED EVENT WITHOUT TEXT OR ATTACHMENTS")
                     continue
 
                 if sender_id == bot_instagram_id:
