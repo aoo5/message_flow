@@ -767,7 +767,7 @@ def handle_message(sender_id: str, text: str) -> str:
         return build_product_reply(product)
 
     if not BOT_SETTINGS["order_collection"]:
-        return BOT_SETTINGS["welcome_message"]
+        return generate_ai_reply(text)
 
     pending = get_pending_order(sender_id)
 
